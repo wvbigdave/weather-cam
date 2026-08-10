@@ -77,7 +77,7 @@ Everything lives in the `CONFIG` dict near the top of the script:
 
 | Constant                  | Default                         | Description                                        |
 | ------------------------- | ------------------------------- | -------------------------------------------------- |
-| `LATITUDE` / `LONGITUDE`  | 38.599269, -82.005519           | Location for sun-time math (Mount Lookout, WV)     |
+| `LATITUDE` / `LONGITUDE`  | Please fill in your own         | Location for sun-time math                         |
 | `TIMEZONE`                | `ZoneInfo("America/New_York")`  | Zone used for sunrise/sunset and stamps            |
 | `PRE_SUNRISE_MINUTES`     | 30                              | How early capture starts before sunrise            |
 | `POST_SUNSET_MINUTES`     | 30                              | How late capture continues after sunset            |
@@ -87,7 +87,7 @@ Everything lives in the `CONFIG` dict near the top of the script:
 | `STAMP_BOTTOM_RIGHT`      | `True`                          | Burn timestamp into the frame                      |
 | `STAMP_TEXT_COLOR`        | `"white"`                       | Timestamp text color                               |
 | `STAMP_BG_COLOR`          | `(0, 0, 0, 190)`                | Semi-transparent box behind the timestamp          |
-| `STAMP_FONT`              | `"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"` | Font used for stamps |
+| `STAMP_FONT`              | `"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"` | Font used for stamps      |
 | `STAMP_FONT_SIZE`         | 40                              | Timestamp font size                                |
 | `TIME_FORMAT`             | `"%Y-%m-%d %H:%M:%S"`           | Timestamp text format                              |
 | `STAMP_PADDING`           | 12                              | Gap between text and box edge                      |
