@@ -128,7 +128,7 @@ After=multi-user.target
 Type=simple
 ExecStart=/usr/bin/python3 /home/dave/weather.py
 Restart=on-failure
-User=dave
+User=(pi user)
 
 [Install]
 WantedBy=multi-user.target
