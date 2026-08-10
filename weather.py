@@ -10,8 +10,8 @@ from libcamera import Transform
 from picamera2 import Picamera2
 
 # ============================= CONFIG =============================
-LATITUDE = 38.599269
-LONGITUDE = -82.005519
+LATITUDE = 
+LONGITUDE = 
 TIMEZONE = "America/New_York"
 SUNRISE_OFFSET_MINUTES = 30   # capture starts this long before sunrise
 SUNSET_OFFSET_MINUTES = 30    # capture ends this long after sunset
