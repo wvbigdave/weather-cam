@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+import ctypes
+import logging
+import logging.handlers
+import os
+import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,17 +15,23 @@ from libcamera import Transform
 from picamera2 import Picamera2
 
 # ============================= CONFIG =============================
-LATITUDE = 
-LONGITUDE = 
+LATITUDE = 0.0    # <-- set to your latitude
+LONGITUDE = 0.0   # <-- set to your longitude
 TIMEZONE = "America/New_York"
 SUNRISE_OFFSET_MINUTES = 30   # capture starts this long before sunrise
 SUNSET_OFFSET_MINUTES = 30    # capture ends this long after sunset
 CAPTURE_INTERVAL_SECONDS = 60
 TUNING_FILE = "/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json"
 OUTPUT_PATH = Path("/mnt/ramcam/current.jpg")
+LOG_PATH = Path("/mnt/ramcam/weathercam.log")
+LOG_MAX_BYTES = 1_000_000     # weathercam.log caps at ~1MB...
+LOG_BACKUP_COUNT = 2          # ...plus 2 rotations, ~3MB max on the ramdisk
 SETTLE_TIME_SECONDS = 5
 RETRY_DELAY_SECONDS = 15
+MAX_INIT_ATTEMPTS = 5         # give up and restart the process (drops all leaked FDs)
 NIGHT_POLL_SECONDS = 30
+FD_WARN_THRESHOLD = 2000      # log a warning if the process holds this many FDs
+FD_EXIT_THRESHOLD = 3500      # hard-exit before we truly run out (LimitNOFILE=4096)
 
 TIME_FORMAT = "%Y-%m-%d %I:%M %p"          # e.g. 2026-08-09 08:45 PM
 LAST_IMAGE_BANNER = "New Images Start Tomorrow At Sunrise"
@@ -43,6 +54,37 @@ _sun_date = None
 _sun_start = None
 _sun_end = None
 
+log = logging.getLogger("weathercam")
+log.setLevel(logging.DEBUG)
+_LOG_FMT = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S")
+try:
+    _fh = logging.handlers.RotatingFileHandler(
+        LOG_PATH, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT, encoding="utf-8"
+    )
+    _fh.setFormatter(_LOG_FMT)
+    log.addHandler(_fh)
+except Exception as exc:
+    print(f"WARNING: could not open log file {LOG_PATH}: {exc}", flush=True)
+_sh = logging.StreamHandler()
+_sh.setFormatter(_LOG_FMT)
+log.addHandler(_sh)
+
+
+def fd_count():
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except OSError:
+        return 0
+
+
+def sd_notify(state):
+    try:
+        lib = ctypes.CDLL("libsystemd.so.0", use_errno=True)
+        if lib.sd_notify(0, state.encode()) < 0:
+            raise OSError("sd_notify failed")
+    except Exception:
+        pass
+
 
 def get_sun_times(now):
     global _sun_date, _sun_start, _sun_end
@@ -57,7 +99,7 @@ def get_sun_times(now):
             _sun_start = sunrise - timedelta(minutes=SUNRISE_OFFSET_MINUTES)
             _sun_end = sunset + timedelta(minutes=SUNSET_OFFSET_MINUTES)
         _sun_date = today
-        print(f"Capture window: {_sun_start} -> {_sun_end}", flush=True)
+        log.info("Capture window: %s -> %s", _sun_start, _sun_end)
     return _sun_start, _sun_end
 
 
@@ -97,7 +139,9 @@ def draw_text_box(draw, img_w, box_text, font, anchor_center_x=None, anchor_righ
 
 
 def stamp_photo(path, timestamp_text, banner_text=None):
-    img = Image.open(path).convert("RGB")
+    with Image.open(path) as src:
+        img = src.convert("RGB")
+        exif = src.info.get("exif")
     draw = ImageDraw.Draw(img)
     w, h = img.size
 
@@ -116,79 +160,116 @@ def stamp_photo(path, timestamp_text, banner_text=None):
         overlay = draw_text_box(draw, w, banner_text, b_font, anchor_center_x=w // 2, anchor_y=banner_y)
         img.paste(overlay, (0, 0), overlay)
 
-    exif = Image.open(path).info.get("exif")
     kwargs = {"quality": JPEG_QUALITY}
     if exif is not None:
         kwargs["exif"] = exif
     img.save(path, **kwargs)
 
 
+def teardown_camera(camera):
+    if camera is None:
+        return
+    try:
+        camera.stop()
+    except Exception as exc:
+        log.debug("camera.stop() error: %r", exc)
+    try:
+        camera.close()
+    except Exception as exc:
+        log.debug("camera.close() error: %r", exc)
+
+
 def init_camera():
-    while True:
+    camera = None
+    for attempt in range(1, MAX_INIT_ATTEMPTS + 1):
         try:
             tuning = Picamera2.load_tuning_file(TUNING_FILE)
-            picam2 = Picamera2(tuning=tuning)
-            config = picam2.create_still_configuration(
+            camera = Picamera2(tuning=tuning)
+            config = camera.create_still_configuration(
                 main={"size": (1920, 1080)},
                 controls={"FrameDurationLimits": (1000000, 1000000)},
                 transform=Transform(hflip=True, vflip=True),
             )
-            picam2.configure(config)
-            picam2.start()
+            camera.configure(config)
+            camera.start()
             time.sleep(SETTLE_TIME_SECONDS)
-            return picam2
+            log.info("Camera initialized (attempt %d, fds=%d).", attempt, fd_count())
+            return camera
         except Exception as exc:
-            print(f"Camera init failed: {exc}; retrying in {RETRY_DELAY_SECONDS}s", flush=True)
-            time.sleep(RETRY_DELAY_SECONDS)
-
-
-def stop_camera(picam2):
-    try:
-        picam2.stop()
-    except Exception:
-        pass
+            log.error("Camera init attempt %d/%d failed: %r (fds=%d)",
+                      attempt, MAX_INIT_ATTEMPTS, exc, fd_count())
+            if camera is not None:
+                teardown_camera(camera)
+            camera = None
+            if attempt < MAX_INIT_ATTEMPTS:
+                time.sleep(RETRY_DELAY_SECONDS)
+    log.error("Giving up on camera init after %d attempts; exiting for systemd restart.",
+              MAX_INIT_ATTEMPTS)
+    sys.exit(1)
 
 
 def main():
     now = datetime.now().astimezone()
-    picam2 = None
-    daytime = is_daytime(now)
+    camera = None
+    last_capture = None
+    log.info("=== WeatherCam started (daylight=%s, fds=%d) ===", is_daytime(now), fd_count())
 
     try:
         while True:
             now = datetime.now().astimezone()
             if is_daytime(now):
-                if picam2 is None:
-                    print("Camera starting (daylight).", flush=True)
-                    picam2 = init_camera()
-                picam2.capture_file(str(OUTPUT_PATH))
-                ts = datetime.now().astimezone().strftime(TIME_FORMAT)
-                stamp_photo(OUTPUT_PATH, ts)
-                print(f"Captured {OUTPUT_PATH} ({ts})", flush=True)
+                if camera is None:
+                    log.info("Camera starting (daylight).")
+                    camera = init_camera()
+                    sd_notify("WATCHDOG=1")
+                else:
+                    fds = fd_count()
+                    if fds > FD_EXIT_THRESHOLD:
+                        log.error("FD count %d exceeds exit threshold %d; restarting.",
+                                  fds, FD_EXIT_THRESHOLD)
+                        teardown_camera(camera)
+                        camera = None
+                        sys.exit(1)
+                    elif fds > FD_WARN_THRESHOLD:
+                        log.warning("High FD count: %d (threshold %d).", fds, FD_WARN_THRESHOLD)
+                try:
+                    camera.capture_file(str(OUTPUT_PATH))
+                    ts = datetime.now().astimezone().strftime(TIME_FORMAT)
+                    stamp_photo(OUTPUT_PATH, ts)
+                    last_capture = now
+                    sd_notify("WATCHDOG=1")
+                    log.info("Captured %s (%s) fds=%d", OUTPUT_PATH, ts, fd_count())
+                except Exception as exc:
+                    log.error("Capture failed: %r; resetting camera.", exc)
+                    teardown_camera(camera)
+                    camera = None
+                    sd_notify("WATCHDOG=1")
                 time.sleep(CAPTURE_INTERVAL_SECONDS)
             else:
-                if picam2 is not None:
-                    print("Nightfall: capturing last image of the day.", flush=True)
+                if camera is not None:
+                    log.info("Nightfall: capturing last image of the day.")
                     try:
-                        picam2.capture_file(str(OUTPUT_PATH))
+                        camera.capture_file(str(OUTPUT_PATH))
                         ts = datetime.now().astimezone().strftime(TIME_FORMAT)
                         stamp_photo(OUTPUT_PATH, ts, banner_text=LAST_IMAGE_BANNER)
-                        print(f"Last image saved {OUTPUT_PATH} ({ts})", flush=True)
+                        last_capture = now
+                        log.info("Last image saved %s (%s)", OUTPUT_PATH, ts)
                     except Exception as exc:
-                        print(f"Last capture failed: {exc}", flush=True)
-                    stop_camera(picam2)
-                    picam2 = None
-                    print("Camera stopped (night).", flush=True)
+                        log.error("Last capture failed: %r", exc)
+                    teardown_camera(camera)
+                    camera = None
+                    sd_notify("WATCHDOG=1")
+                    log.info("Camera stopped (night). fds=%d", fd_count())
                 time.sleep(NIGHT_POLL_SECONDS)
     except KeyboardInterrupt:
-        print("Capture stopped by user.", flush=True)
+        log.info("Capture stopped by user.")
     except Exception as exc:
-        print(f"Capture failed: {exc}", flush=True)
+        log.exception("Unhandled error: %r", exc)
         raise
     finally:
-        if picam2 is not None:
-            stop_camera(picam2)
-        print("Camera stopped cleanly.", flush=True)
+        if camera is not None:
+            teardown_camera(camera)
+        log.info("Camera stopped cleanly. fds=%d", fd_count())
 
 
 if __name__ == "__main__":
