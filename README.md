@@ -299,6 +299,10 @@ You should see messages marking the capture window, nightfall
   explicit `stop()`+`close()` teardown, FD-count guard-rails, systemd
   `WatchdogSec`, capture self-healing, and context-managed image handles.
   Added on-ramdisk size-capped logging (`weathercam.log`).
+- **2026-08-16** — **SD-card wear + memory optimization.**
+  Cached font loading (no per-capture SD font read) and the libsystemd
+  handle, added `sys.dont_write_bytecode` (no `.pyc` writes to SD), and
+  removed dead code.
 
 ## License
 

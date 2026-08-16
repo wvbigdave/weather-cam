@@ -14,6 +14,8 @@ from astral.sun import sun
 from libcamera import Transform
 from picamera2 import Picamera2
 
+sys.dont_write_bytecode = True  # never write .pyc to the SD card
+
 # ============================= CONFIG =============================
 LATITUDE = 0.0    # <-- set to your latitude
 LONGITUDE = 0.0   # <-- set to your longitude
@@ -77,10 +79,15 @@ def fd_count():
         return 0
 
 
+_systemd_lib = None
+
+
 def sd_notify(state):
+    global _systemd_lib
     try:
-        lib = ctypes.CDLL("libsystemd.so.0", use_errno=True)
-        if lib.sd_notify(0, state.encode()) < 0:
+        if _systemd_lib is None:
+            _systemd_lib = ctypes.CDLL("libsystemd.so.0", use_errno=True)
+        if _systemd_lib.sd_notify(0, state.encode()) < 0:
             raise OSError("sd_notify failed")
     except Exception:
         pass
@@ -110,8 +117,15 @@ def is_daytime(now):
     return start <= now <= end
 
 
+_font_cache = {}
+
+
 def load_font(size):
-    return ImageFont.truetype(FONT_PATH, size)
+    font = _font_cache.get(size)
+    if font is None:
+        font = ImageFont.truetype(FONT_PATH, size)
+        _font_cache[size] = font
+    return font
 
 
 def draw_text_box(draw, img_w, box_text, font, anchor_center_x=None, anchor_right_x=None, anchor_y=None):
@@ -211,7 +225,6 @@ def init_camera():
 def main():
     now = datetime.now().astimezone()
     camera = None
-    last_capture = None
     log.info("=== WeatherCam started (daylight=%s, fds=%d) ===", is_daytime(now), fd_count())
 
     try:
@@ -236,7 +249,6 @@ def main():
                     camera.capture_file(str(OUTPUT_PATH))
                     ts = datetime.now().astimezone().strftime(TIME_FORMAT)
                     stamp_photo(OUTPUT_PATH, ts)
-                    last_capture = now
                     sd_notify("WATCHDOG=1")
                     log.info("Captured %s (%s) fds=%d", OUTPUT_PATH, ts, fd_count())
                 except Exception as exc:
@@ -252,7 +264,6 @@ def main():
                         camera.capture_file(str(OUTPUT_PATH))
                         ts = datetime.now().astimezone().strftime(TIME_FORMAT)
                         stamp_photo(OUTPUT_PATH, ts, banner_text=LAST_IMAGE_BANNER)
-                        last_capture = now
                         log.info("Last image saved %s (%s)", OUTPUT_PATH, ts)
                     except Exception as exc:
                         log.error("Last capture failed: %r", exc)
