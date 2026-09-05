@@ -4,10 +4,10 @@
 timestamped JPEG every 60 seconds during daylight, then fully shuts the
 camera down overnight and automatically restarts at dawn.
 
-![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Zero%20W-A22846?style=for-the-badge&logo=raspberrypi&logoColor=white)
-![Picamera2](https://img.shields.io/badge/Picamera2-libcamera-0078D4?style=for-the-badge&logo=camera&logoColor=white)
-![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey?style=for-the-badge&logo=creativecommons&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Zero%20W-A22846?logo=raspberrypi&logoColor=white)
+![Picamera2](https://img.shields.io/badge/Picamera2-libcamera-0078D4)
+![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey?logo=creativecommons&logoColor=white)
 
 ---
 
