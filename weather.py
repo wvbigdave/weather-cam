@@ -258,6 +258,12 @@ def main():
                     sd_notify("WATCHDOG=1")
                 time.sleep(CAPTURE_INTERVAL_SECONDS)
             else:
+                # Always keep the systemd watchdog alive during the night poll
+                # loop, not only on the camera teardown transition. Without this,
+                # once the camera is already stopped the process never pings the
+                # watchdog and systemd (WatchdogSec=180) ABRT-kills it every
+                # NIGHT_POLL cycle.
+                sd_notify("WATCHDOG=1")
                 if camera is not None:
                     log.info("Nightfall: capturing last image of the day.")
                     try:
